@@ -1,0 +1,5 @@
+add "Dune", Frank Herbert, Sci-Fi, 1965, 9.99
+add "Neuromancer", William Gibson, Sci-Fi, 1984, 14.50
+add "Snow Crash", Neal Stephenson, Sci-Fi, 1992, 12.30
+add "Foundation", Isaac Asimov, Sci-Fi, 1951, 10.75
+add "Hyperion", Dan Simmons, Sci-Fi, 1989, 8.99
