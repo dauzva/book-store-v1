@@ -5,4 +5,10 @@ module Lib1
 -- | This function returns a list of words
 -- to be autocompleted in your program's repl.
 completions :: [String]
-completions = []
+completions = [ "add", 
+                "remove",
+                "list",
+
+				-- Genre Selection
+				"Fiction", "Non-Fiction", "Mystery", "Thriller", "Romance", "Sci-Fi", "Fantasy", "Biography"
+				]
