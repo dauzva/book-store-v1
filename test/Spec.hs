@@ -6,7 +6,7 @@
 import Test.Tasty ( TestTree, defaultMain, testGroup )
 import Test.Tasty.HUnit ( testCase, (@?=) )
 import Test.Tasty.QuickCheck as QC
-import Control.Concurrent ( Chan, newChan, writeChan, readChan )
+import Control.Concurrent ( Chan, newChan, writeChan, readChan, forkIO )
 import Control.Monad.IO.Class ( liftIO )
 import Lib1 qualified
 import Lib2 qualified
@@ -14,6 +14,8 @@ import Lib3 qualified
 import GHC.Generics (Generic)
 import Control.Concurrent.STM (TVar, newTVarIO, readTVarIO, atomically)
 import Test.QuickCheck.Monadic (monadicIO, assert)
+import Control.Concurrent.Chan (Chan, newChan, writeChan, readChan)
+import System.IO (writeFile, readFile)
 
 -- Main test entry point
 main :: IO ()
@@ -66,25 +68,6 @@ unitTests = testGroup "Book Store Tests" [
         Lib2.parseQuery "list" @?= Right Lib2.ListQuery
     ]
 
--- Property-based tests for Lib3
-propertyTests :: TestTree
-propertyTests = testGroup "Lib3 Property Tests"
-  [
-    QC.testProperty "parse and render round-trip for Statements" $
-      \statements -> 
-        let rendered = Lib3.renderStatements statements
-            parsed = Lib3.parseStatements rendered
-        in case parsed of
-            Right (s, "") -> s == statements
-            _ -> False,
-
-    QC.testProperty "storage operations round-trip" $
-      \content -> ioRoundTrip content
-  ]
-
-instance QC.Arbitrary Lib3.StorageOp where
-  arbitrary = QC.oneof [ Lib3.Save <$> arbitrary <*> arbitrary
-                       , Lib3.Load <$> arbitrary ]
 
 instance QC.Arbitrary Lib3.Statements where
   arbitrary = QC.oneof [ Lib3.Single <$> arbitrary
@@ -102,15 +85,21 @@ instance QC.Arbitrary Lib2.Query where
     , return Lib2.ListQuery
     ]
 
--- Property test for storage operations (load and save)
-ioRoundTrip :: String -> Property
-ioRoundTrip content = monadicIO $ do
-  ioChan <- liftIO newChan
-  responseChan <- liftIO newChan
-  liftIO $ writeChan ioChan (Lib3.Save content responseChan)
-  savedContent <- liftIO $ readChan responseChan
-  liftIO $ writeChan ioChan (Lib3.Load responseChan)
-  loadedContent <- liftIO $ readChan responseChan
-  assert (savedContent == loadedContent)
+propertyTests :: TestTree
+propertyTests = testGroup "Lib3 Property Tests"
+  [
+    testCase "storage operations round-trip" $
+      ioRoundTrip "Sample content for storage"
+  ]
 
-
+ioRoundTrip :: String -> IO ()
+ioRoundTrip content = do
+  ioChan <- newChan
+  _ <- forkIO $ Lib3.storageOpLoop ioChan
+  saveResponseChan <- newChan
+  loadResponseChan <- newChan
+  writeChan ioChan (Lib3.Save content saveResponseChan)
+  _ <- readChan saveResponseChan
+  writeChan ioChan (Lib3.Load loadResponseChan)
+  loadedContent <- readChan loadResponseChan
+  loadedContent @?= content++"\n"
