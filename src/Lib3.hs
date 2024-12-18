@@ -8,6 +8,7 @@ module Lib3
     parseStatements,
     marshallState,
     renderStatements,
+	executeStatements,
     Statements(..),
     Command(..)
     ) where
@@ -128,7 +129,6 @@ stateTransition stateVar command ioChan =
             responseChan <- newChan
             writeChan ioChan (Load responseChan)
             content <- readChan responseChan
-            -- Using `runExceptT` to handle the new `parseStatements`
             result <- runExceptT $ parseStatements content
             case result of
                 Left err -> return $ Left err

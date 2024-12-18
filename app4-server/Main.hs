@@ -4,59 +4,66 @@
 module Main (main) where
 
 import Web.Scotty
-import Control.Concurrent (Chan, newChan, writeChan, readChan)
+import Control.Concurrent (Chan, newChan, writeChan, readChan, forkIO)
+import Control.Concurrent.STM (newTVarIO, TVar)
 import Control.Monad.IO.Class (liftIO)
 import Data.String.Conversions (cs)
+import Lib2 qualified
 import Lib3 qualified
-import System.IO (readFile, writeFile)
+import Control.Monad.Trans.Except (runExceptT)
+import qualified Control.Concurrent.STM as STM
 
--- Application state: a shared channel for communication
-type AppState = Chan Lib3.StorageOp
+-- Application state 
+data AppState = AppState 
+    { storageChan :: Chan Lib3.StorageOp
+    , stateVar :: TVar Lib2.State
+    }
 
 main :: IO ()
 main = do
-    -- Initialize shared channel for handling save/load operations
-    ioChan <- newChan :: IO AppState
+    ioChan <- newChan :: IO (Chan Lib3.StorageOp)
+    initialState <- newTVarIO Lib2.emptyState
+    let appState = AppState ioChan initialState
+    _ <- forkIO $ Lib3.storageOpLoop ioChan
     putStrLn "Starting HTTP server on port 3000..."
     scotty 3000 $ do
-        post "/" $ handleCommand ioChan
+        post "/" $ handleCommand appState
 
--- Handle incoming HTTP requests
 handleCommand :: AppState -> ActionM ()
-handleCommand ioChan = do
-    -- Read the request body and convert it into a String
+handleCommand appState = do
     reqBody <- body
     let cmdInput = cs reqBody :: String
+    result <- liftIO $ runExceptT $ Lib3.parseCommand cmdInput
+    case result of
+        Left err -> do
+            liftIO $ putStrLn $ "Error parsing command: " ++ err
+            text (cs ("Invalid command: " ++ err))
+        Right (cmd, _) -> do
+            result <- liftIO $ executeLib3Command appState cmd
+            text (cs result)
 
-    -- Parse the command using Lib3.parseCommand
-    case Lib3.parseCommand cmdInput of
-		Left err -> do
-			liftIO $ putStrLn $ "Error parsing command: " ++ err
-			text (cs ("Invalid command: " ++ err))
-		Right (cmd, _) -> do  -- Extract the command, ignore the remaining String
-			result <- liftIO $ executeLib3Command ioChan cmd
-			text (cs result)
-
-
--- Execute a Lib3.Command parsed by Lib3.parseCommand
 executeLib3Command :: AppState -> Lib3.Command -> IO String
-executeLib3Command ioChan cmd =
+executeLib3Command appState cmd = do
     case cmd of
         Lib3.SaveCommand -> do
-            -- Simulate save operation
-            responseChan <- newChan
-            writeChan ioChan (Lib3.Save "state" responseChan)
-            _ <- readChan responseChan
-            return "State saved successfully."
-
+            result <- Lib3.stateTransition (stateVar appState) cmd (storageChan appState)
+            case result of
+                Left err -> return $ "Save failed: " ++ err
+                Right (Just msg, _) -> return msg
+                Right (Nothing, _) -> return "State saved successfully."
+        
         Lib3.LoadCommand -> do
-            -- Simulate load operation
-            responseChan <- newChan
-            writeChan ioChan (Lib3.Load responseChan)
-            loadedContent <- readChan responseChan
-            return $ "Loaded content: " ++ loadedContent
-
+            result <- Lib3.stateTransition (stateVar appState) cmd (storageChan appState)
+            case result of
+                Left err -> return $ "Load failed: " ++ err
+                Right (Just msg, stateStr) -> return $ msg ++ " - " ++ stateStr
+                Right (Nothing, stateStr) -> return $ "State loaded: " ++ stateStr
+        
         Lib3.StatementCommand statements -> do
-            -- Render and display statements
-            let rendered = Lib3.renderStatements statements
-            return $ "Executed statements: " ++ rendered
+            result <- STM.atomically $ Lib3.executeStatements (stateVar appState) statements
+            case result of
+                Left err -> return $ "Command execution failed: " ++ err
+                Right (msg, stateStr) -> 
+                    return $ "Statements executed. " ++ 
+                             (maybe "" (\m -> m ++ " ") msg) ++ 
+                             "Current state: \n" ++ stateStr

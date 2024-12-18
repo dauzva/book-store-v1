@@ -92,7 +92,9 @@ executable fp2024-four-server
     , fp2024
     , repline
     , scotty
+    , stm
     , string-conversions
+    , transformers
   default-language: Haskell2010
 
 executable fp2024-one
