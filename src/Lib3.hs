@@ -20,6 +20,8 @@ import qualified Lib2
 import Control.Concurrent.Chan (newChan)
 import GHC.IO.Handle
 import GHC.IO.Handle.FD
+import Control.Monad.Trans.Except (ExceptT, throwE, runExceptT)
+import Control.Monad (forM_)
 
 data StorageOp = Save String (Chan ()) | Load (Chan String)
 -- | This function is started from main
@@ -53,33 +55,34 @@ data Command = StatementCommand Statements |
                deriving (Show, Eq)
 
 -- | Parses user's input.
-parseCommand :: String -> Either String (Command, String)
+parseCommand :: String -> ExceptT String IO (Command, String)
 parseCommand str
-    | str == "load" = Right (LoadCommand, "")
-    | str == "save" = Right (SaveCommand, "")
-    | otherwise = case parseStatements str of
-        Left err -> Left err
-        Right (statements, rest) -> Right (StatementCommand statements, rest)
+    | str == "load" = return (LoadCommand, "")
+    | str == "save" = return (SaveCommand, "")
+    | otherwise = do
+        (statements, rest) <- parseStatements str
+        return (StatementCommand statements, rest)
 
 -- | Parses Statement.
 -- Must be used in parseCommand.
 -- Reuse Lib2 as much as you can.
 -- You can change Lib2.parseQuery signature if needed.
-parseStatements :: String -> Either String (Statements, String)
-parseStatements str =
+parseStatements :: String -> ExceptT String IO (Statements, String)
+parseStatements str = do
     let trimmed = dropWhile (== ' ') str
         linesOfInput = lines trimmed
-    in parseQueries linesOfInput []
+    parseQueries linesOfInput []
 
   where
-    parseQueries :: [String] -> [Lib2.Query] -> Either String (Statements, String)
-    parseQueries [] acc = Right (Batch (reverse acc), "")
+    parseQueries :: [String] -> [Lib2.Query] -> ExceptT String IO (Statements, String)
+    parseQueries [] acc = return (Batch (reverse acc), "")
     parseQueries (line:rest) acc
-        | null (dropWhile (== ' ') line) = parseQueries rest acc -- Skip empty lines
-        | otherwise =
-            case Lib2.parseQuery line of
-                Left err -> Left $ "Error parsing query: " ++ err
-                Right query -> parseQueries rest (query : acc)
+        | null (dropWhile (== ' ') line) = parseQueries rest acc
+        | otherwise = do
+            query <- case Lib2.parseQuery line of
+                Left err -> throwE $ "Error parsing query: " ++ err
+                Right query -> return query
+            parseQueries rest (query : acc)
 
 -- | Converts program's state into Statements
 -- (probably a batch, but might be a single query)
@@ -125,13 +128,17 @@ stateTransition stateVar command ioChan =
             responseChan <- newChan
             writeChan ioChan (Load responseChan)
             content <- readChan responseChan
-            case parseStatements content of
+            -- Using `runExceptT` to handle the new `parseStatements`
+            result <- runExceptT $ parseStatements content
+            case result of
                 Left err -> return $ Left err
-                Right (Batch queries, _) -> atomically $ do
-                    writeTVar stateVar Lib2.emptyState
-                    executeBatch stateVar Lib2.emptyState queries
+                Right (Batch queries, _) -> do
+                    atomically $ do
+                        writeTVar stateVar Lib2.emptyState
+                        executeBatch stateVar Lib2.emptyState queries
+                    return $ Right (Just "State loaded", show queries)
                 Right _ -> return $ Left "Unexpected non-batch command in loaded content."
-        
+
         SaveCommand -> do
             currentState <- readTVarIO stateVar
             let stateStr = renderStatements (marshallState currentState)
@@ -139,7 +146,7 @@ stateTransition stateVar command ioChan =
             writeChan ioChan (Save stateStr responseChan)
             readChan responseChan
             return $ Right (Just "State saved", show currentState)
-        
+
         StatementCommand statements ->
             atomically $ executeStatements stateVar statements
 

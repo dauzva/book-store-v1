@@ -20,6 +20,7 @@ import System.Console.Repline
     evalRepl,
   )
 import Control.Concurrent (forkIO)
+import Control.Monad.Except (runExceptT)
 
 type Repl a = HaskelineT (StateT (TVar Lib2.State, Chan Lib3.StorageOp) IO) a
 
@@ -37,15 +38,16 @@ completer n =
 
 cmd :: String -> Repl ()
 cmd str = do
-  case Lib3.parseCommand str of
-    Left e -> liftIO $ putStrLn $ "PARSE ERROR:" ++ e
-    Right (c, "") -> do
-      (st, chan) <- lift get
-      tr <- liftIO $ Lib3.stateTransition st c chan
-      case tr of
-        Left e2 -> liftIO $ putStrLn $ "ERROR:" ++ e2
-        Right m -> mapM_ (liftIO . putStrLn) m
-    Right (_, r) -> liftIO $ putStrLn $ "PARSE ERROR: string is not fully consumed - " ++ r
+    result <- liftIO $ runExceptT $ Lib3.parseCommand str
+    case result of
+        Left e -> liftIO $ putStrLn $ "PARSE ERROR:" ++ e
+        Right (c, "") -> do
+            (st, chan) <- lift get
+            tr <- liftIO $ Lib3.stateTransition st c chan
+            case tr of
+                Left e2 -> liftIO $ putStrLn $ "ERROR:" ++ e2
+                Right m -> mapM_ (liftIO . putStrLn) m
+        Right (_, r) -> liftIO $ putStrLn $ "PARSE ERROR: string is not fully consumed - " ++ r
 
 invite :: MultiLine -> Repl String
 invite SingleLine = pure ">>> "
