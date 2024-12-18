@@ -6,11 +6,16 @@ module Lib2
     parseQuery,
     State(..),
     emptyState,
-    stateTransition
+    stateTransition,
+	Parser,
+	parse
     ) where
 import qualified Data.Char as C
 import qualified Data.List as L
-
+import qualified Control.Monad.Trans.State.Strict as S
+import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.State.Strict (runState)
 
 validGenres :: [String]
 validGenres = [
@@ -23,6 +28,11 @@ validGenres = [
     "Fantasy",
     "Biography"
     ]
+
+-- Run a Parser
+type Parser a = ExceptT String (S.State String) a
+parse :: Parser a -> String -> (Either String a, String)
+parse parser = runState (runExceptT parser)
 
 -- | An entity which represets user input.
 -- It should match the grammar from Laboratory work #1.
@@ -48,160 +58,142 @@ instance Show Query where
 -- | Parses user's input.
 -- The function must have tests.
 parseQuery :: String -> Either String Query
-parseQuery str = 
-    case parseCmd str of
-        Left(eCmd) -> Left(eCmd)
-        Right(rCmd) -> 
-			case parseBook rCmd of
-				Left(eBook) -> Left(eBook)
-				Right(rBook) -> Right(rBook)
+parseQuery input = 
+    case parse fullParser input of
+        (Left err, _) -> Left err
+        (Right result, _) -> Right result
+  where
+    fullParser :: Parser Query
+    fullParser = do
+        cmd <- parseCmd
+        parseBook cmd
 
 
-parseComma :: String -> Either String String
-parseComma str =
-	let
-		rest1 = L.takeWhile C.isSpace str
-		rest2 = drop (length rest1) str
-		comma = L.take 1 rest2
-		rest3 = drop 1 rest2
-		rest4 = L.takeWhile C.isSpace rest3
-		rest = drop (length rest4) rest3
-	in
-		if comma == "," then Right rest
-		else Left "Invalid separator"
+parseComma :: Parser ()
+parseComma = do
+    input <- lift S.get
+    let (spaces1, rest1) = span C.isSpace input
+        (comma, rest2) = splitAt 1 rest1
+        (_, rest3) = span C.isSpace rest2
+    if comma == ","
+        then lift $ S.put rest3
+        else throwE "Invalid separator"
 
-parseCmd :: String -> Either String Query
-parseCmd str =
-        let
-                cmd = L.takeWhile C.isAlpha str
-                rest1 = drop (length cmd) str
-                rest2 = L.takeWhile C.isSpace rest1
-                rest = drop (length rest2) rest1
-        in
-                if      cmd == "add"    then Right (AddQuery rest)
-                else if cmd == "remove" then Right (RemoveQuery rest)
-                else if cmd == "list"   then Right (ListQuery)
-                else                    Left "Invalid command"
 
-parseBook :: Query -> Either String Query
-parseBook ListQuery = Right ListQuery
-parseBook (AddQuery str) = 
-	case parseTitle str of
-		Left(e1) -> Left(e1)
-		Right(title, r1) ->
-			case parseAuthor r1 of
-				Left(e2) -> Left(e2)
-				Right(author, r2) -> 
-					case parseGenre r2 of
-						Left(e3) -> Left(e3)
-						Right(genre, r3) -> 
-							case parseYear r3 of
-								Left(e4) -> Left(e4)
-								Right(year, r4) -> 
-									case parsePrice r4 of
-										Left(e5) -> Left(e5)
-										Right(price, r5) -> Right(AddQuery $ title++", "++author++", "++genre++", "++year++", "++price)
-parseBook (RemoveQuery str) =
-	case parseId str of
-		Left(e1) -> Left(e1)
-		Right(r1) -> Right(RemoveQuery r1)
+parseCmd :: Parser Query
+parseCmd = do
+    input <- lift S.get
+    let (cmd, rest1) = span C.isAlpha input
+        rest2 = dropWhile C.isSpace rest1
+    case cmd of
+        "add" -> do
+            lift $ S.put rest2
+            return $ AddQuery rest2
+        "remove" -> do
+            lift $ S.put rest2
+            return $ RemoveQuery rest2
+        "list" -> do
+            lift $ S.put rest2
+            return ListQuery
+        _ -> throwE "Invalid command"
 
-parseTitle :: String -> Either String (String, String)
-parseTitle str = parseTitle' str []
 
-parseTitle' :: String -> String -> Either String (String, String)
-parseTitle' str [] = 
-	let
-		titleStart = L.take 1 str
-		rest1 = drop 1 str
-		title = L.takeWhile (/= '\"') rest1
-		rest2 = drop (length title) rest1
-		rest3 = L.takeWhile C.isSpace rest2
-		rest = drop (length rest3) rest2
-		titleEnd = L.take 1 rest
-	in
-		if (titleStart == "\"" && titleEnd == "\"") then parseTitle' rest title
-		else Left "Invalid Title syntax"
-parseTitle' str acc = 
-	let
-		titleStart = L.take 1 str
-		rest1 = drop 1 str
-		title = L.takeWhile (/= '\"') rest1
-		rest2 = drop (length title) rest1
-		rest3 = L.takeWhile C.isSpace rest2
-		rest = drop (length rest3) rest2
-		titleEnd = L.take 1 rest
-	in
-		if (titleStart == "\"" && titleEnd == "\"") then parseTitle' rest (acc++"\""++title)
-		else Right (acc, title)
 
-parseAuthor :: String -> Either String (String, String)
-parseAuthor str =
-	case parseComma str of
-		Left(e1) -> Left(e1)
-		Right(r1) -> 
-			let
-				name = L.takeWhile C.isAlpha r1
-				rest1 = drop (length name) r1
-				rest2 = L.takeWhile C.isSpace rest1
-				rest3 = drop (length rest2) rest1
-				surname = L.takeWhile C.isAlpha rest3
-				rest = drop (length surname) rest3
-			in
-				if (name /= [] && surname /= []) then Right(name++" "++surname, rest)
-				else Left "Invalid Author"
+parseBook :: Query -> Parser Query
+parseBook ListQuery = return ListQuery
+parseBook (AddQuery _) = do
+    title <- parseTitle
+    author <- parseAuthor
+    genre <- parseGenre
+    year <- parseYear
+    price <- parsePrice
+    return $ AddQuery (title ++ ", " ++ author ++ ", " ++ genre ++ ", " ++ year ++ ", " ++ price)
+parseBook (RemoveQuery _) = do
+    idStr <- parseId
+    return $ RemoveQuery idStr
 
-parseGenre :: String -> Either String (String, String)
-parseGenre str = 
-	case parseComma str of
-		Left(e1) -> Left(e1)
-		Right(r1) ->
-			let
-				genre = L.takeWhile (\c -> C.isAlpha c || c == '-') r1
-				rest = drop (length genre) r1
-			in
-				if genre `elem` validGenres then Right (genre, rest)
-				else Left "Invalid Genre"
+
+parseTitle :: Parser String
+parseTitle = do
+    input <- lift S.get
+    case input of
+        ('"':xs) -> do
+            let (title, rest) = break (== '"') xs
+            if null rest
+                then throwE "Invalid Title syntax"
+                else do
+                    lift $ S.put (drop 1 rest)
+                    return title
+        _ -> throwE "Invalid Title syntax"
+
+
+parseAuthor :: Parser String
+parseAuthor = do
+    parseComma
+    input <- lift S.get
+    let (name, rest1) = span C.isAlpha input
+        (spaces, rest2) = span C.isSpace rest1
+        (surname, rest3) = span C.isAlpha rest2
+    if null name || null surname
+        then throwE "Invalid Author"
+        else do
+            lift $ S.put rest3
+            return $ name ++ " " ++ surname
+
+
+parseGenre :: Parser String
+parseGenre = do
+    parseComma
+    input <- lift S.get
+    let (genre, rest) = span (\c -> C.isAlpha c || c == '-') input
+    if genre `elem` validGenres
+        then do
+            lift $ S.put rest
+            return genre
+        else throwE "Invalid Genre"
+
 					
-parseYear :: String -> Either String (String, String)
-parseYear str =
-	case parseComma str of
-		Left(e1) -> Left(e1)
-		Right(r1) -> 
-			let
-				year = L.take 4 r1
-				rest = drop (length year) r1
-			in
-				if all C.isDigit year then Right(year, rest)
-				else Left "Invalid Year"
+parseYear :: Parser String
+parseYear = do
+    parseComma
+    input <- lift S.get
+    let (year, rest) = splitAt 4 input
+    if all C.isDigit year && length year == 4
+        then do
+            lift $ S.put rest
+            return year
+        else throwE "Invalid Year"
 
-parsePrice :: String -> Either String (String, String)
-parsePrice str =
-	case parseComma str of
-		Left(e1) -> Left(e1)
-		Right(r1) -> 
-			let
-				price = L.takeWhile C.isNumber r1
-				r2 = drop (length price) r1
-				decimal = L.take 1 r2
-				r3 = drop 1 r2
-				price1 = L.takeWhile C.isNumber r3
-				rest = drop (length price1) r3
-			in
-				if (price /= [] && (null decimal || all C.isSpace decimal) && (null rest || all C.isSpace rest)) then Right(price, rest)
-				else if (price /= [] && decimal == "." && price1 /= [] && (length price1 == 1 || length price1 == 2) && (null rest || all C.isSpace rest)) then Right(price++"."++price1, rest)
-				else Left "Invalid Price"
 
-parseId :: String -> Either String String
-parseId str =
-	let
-        r1 = L.takeWhile C.isSpace str
-        r2 = drop (length r1) str
-        id = L.takeWhile C.isNumber r2
-	in
-        if id /= [] then Right id
-        else Left "Invalid ID"
+parsePrice :: Parser String
+parsePrice = do
+    parseComma
+    input <- lift S.get
+    let (pricePart1, rest1) = span C.isNumber input
+        (decimal, rest2) = splitAt 1 rest1
+        (pricePart2, rest3) = span C.isNumber rest2
+    case (pricePart1, decimal, pricePart2) of
+        (_, ".", []) -> throwE "Invalid Price"
+        ([], _, _) -> throwE "Invalid Price"
+        (_, ".", p2) | length p2 > 2 -> throwE "Invalid Price"
+        (_, ".", _) -> do
+            lift $ S.put rest3
+            return $ pricePart1 ++ decimal ++ pricePart2
+        (_, _, _) -> do
+            lift $ S.put rest1
+            return pricePart1
 
+
+parseId :: Parser String
+parseId = do
+    input <- lift S.get
+    let (spaces, rest1) = span C.isSpace input
+        (idStr, rest2) = span C.isDigit rest1
+    if null idStr
+        then throwE "Invalid ID"
+        else do
+            lift $ S.put rest2
+            return idStr
 
 -- | An entity which represents your program's state.
 -- Currently it has no constructors but you can introduce
@@ -232,23 +224,23 @@ stateTransition (State old) q =
             Right (Just (show (State old)), State old)
         AddQuery a ->
             let
-                id = AddQuery ((show (length old + 1)) ++ ". " ++ a)
-                new = State (old ++ [id])  
+                id = show (length old + 1)
+                newQuery = AddQuery (id ++ ". " ++ a)
+                newState = State (old ++ [newQuery])
             in
-                Right (Just (show new), new)
+                Right (Just (show newQuery), newState)
         RemoveQuery idStr ->
             let
                 id = read idStr :: Int
-                getId (AddQuery str) = takeWhile (/= '.') str
-                matchId x = getId x == idStr
-                newList = L.deleteBy (\x y -> matchId x && matchId y) (AddQuery idStr) old
+                isValidIndex = id >= 1 && id <= length old
+                matchId (AddQuery str) = takeWhile (/= '.') str == idStr
+                newList = filter (not . matchId) old
                 reindexed = zipWith reindex [1..] newList
-                reindex n (AddQuery str) = 
+                reindex n (AddQuery str) =
                     let content = dropWhile (/= '.') str
                     in AddQuery (show n ++ content)
-                new = State reindexed
+                newState = State reindexed
             in
-				if ((id > (length old)) || (id < 1)) then Left "Id not found"
-                else Right (Just (show new), new)
-		
-
+                if not isValidIndex 
+                then Left "Id not found"
+                else Right (Just "Entry removed", newState)

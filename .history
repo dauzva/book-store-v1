@@ -1,3 +1,18 @@
+load
+list
+save
+add "asd", as as, Fantasy, 2001, 12.1
+add "asd", as as, Fantasy, 2001, 12.
+add "asd", as as, Fantasy, 2001, 
+add "asd", as as, Fantasy, 
+add "asd", as as, 
+load
+load
+save
+load
+add
+AD
+add 
 remove 1
 load
 remove 
