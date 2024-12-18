@@ -64,6 +64,6 @@ executeLib3Command appState cmd = do
             case result of
                 Left err -> return $ "Command execution failed: " ++ err
                 Right (msg, stateStr) -> 
-                    return $ "Statements executed. " ++ 
+                    return $ "Statements executed. \n" ++ 
                              (maybe "" (\m -> m ++ " ") msg) ++ 
                              "Current state: \n" ++ stateStr

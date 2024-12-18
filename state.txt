@@ -1,3 +1,5 @@
-add "asdasd", asd asds, Fantasy, 2001, 14.33
-add "asdasd", asd asds, Fantasy, 2001, 177.33
+add "Title", John Doe, Sci-Fi, 2001, 15.10
+add "Title", John Doe, Sci-Fi, 2001, 15.14
+add "Title", John Doe, Sci-Fi, 2001, 15.4
+add "Title", John Doe, Sci-Fi, 2001, 4
 
